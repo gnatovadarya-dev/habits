@@ -240,7 +240,8 @@ function vToday(){
   }else{
     const list=active().filter(h=>planned(h,d));
     if(rest)html+=`<div class="glass banner"><span>День відпочинку. Серії в безпеці, а виконане все одно зарахується</span><button class="lnk" data-unrest="1">Скасувати</button></div>`;
-    html+=list.length?`<div class="tiles">${list.map(h=>habitTile(h,d)).join("")}</div>`:`<div class="card empty"><div class="muted">На цей день звичок не заплановано. Відпочивайте</div></div>`;
+    if(!list.length)html+=`<div class="card empty"><div class="muted">На цей день звичок не заплановано. Відпочивайте</div></div>`;
+    html+=`<div class="tiles">${list.map(h=>habitTile(h,d)).join("")}<button class="tile addtile" data-addhabit="1"><span class="plus">+</span><span class="nm">Звичка</span><span class="mt">${active().length>=5?"у Вас уже "+active().length+". Може, достатньо?":"готові варіанти або своя"}</span></button></div>`;
   }
   const f=isToday?factOfDay():null;
   if(f)html+=`<div class="card fact"><span class="cap">факт дня</span><div style="font-size:16px;font-weight:400">${esc(f.t)}</div><div class="src">${esc(f.s)}</div></div>`;
@@ -426,7 +427,7 @@ function openStory(P,key){const cards=buildStory(P);let i=0;const root=document.
 function render(){const app=document.getElementById("app");const sc=window.scrollY;
   app.innerHTML={today:vToday,cal:vCal,stats:vStats,set:vSet}[state.tab]();
   document.querySelectorAll("nav.tabs button").forEach(b=>b.dataset.tab===state.tab?b.setAttribute("aria-current","page"):b.removeAttribute("aria-current"));
-  window.scrollTo(0,sc);PhotoStore.hydrate(app);
+  window.scrollTo(0,sc);PhotoStore.hydrate(app);if(window.placeNavInd)placeNavInd();
   if(state.tab==="set")storageLine()}
 async function storageLine(){const el=document.getElementById("storageLine");if(!el)return;
   try{const e=await navigator.storage.estimate();el.textContent="Пам'ять застосунку: ~"+Math.round((e.usage||0)/1048576)+" МБ"}catch(err){el.textContent=""}}
@@ -542,6 +543,7 @@ document.getElementById("app").addEventListener("click",e=>{const b=e.target.clo
   if(b.id==="saveNote"){const m=state.data.mood[d];if(!m)return;m.note=document.getElementById("moodNote").value.trim();save();render();toast(m.note?"Запис збережено. Дякую, що приділили собі час":"Збережено");return}
   if(b.dataset.sugg){const s=SUGG[+b.dataset.sugg];state.data.habits.push({id:uid(),created:todayISO(),schedule:{kind:"daily",days:[1,2,3,4,5],times:3},step:1,unit:"",target:1,...s});save();render();toast(`«${s.name}» додано. Можна ще 1–2 або почати`);return}
   if(b.dataset.newhabit){habitForm();return}
+  if(b.dataset.addhabit){addHabitSheet();return}
   if(b.dataset.edit){habitForm(findH(b.dataset.edit));return}
   if(b.dataset.arch){const h=findH(b.dataset.arch);h.archived=!h.archived;save();render();toast(h.archived?"Поставлено на паузу. Історія збережена":"Звичка знову активна");return}
   if(b.dataset.delh){if(!b.classList.contains("armed")){b.classList.add("armed");b.textContent="Точно? Історія зникне";setTimeout(()=>{if(b.isConnected){b.classList.remove("armed");b.textContent="Видалити"}},3500);return}
@@ -564,7 +566,36 @@ document.getElementById("app").addEventListener("click",e=>{const b=e.target.clo
   if(b.id==="phImportBtn"){photoImport.click();return}
 });
 document.getElementById("app").addEventListener("change",e=>{if(e.target.id==="bkFile"&&e.target.files[0]){importBackup(e.target.files[0]);e.target.value=""}});
-document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{flushNote();state.moodOpen=false;state.tab=b.dataset.tab;if(b.dataset.tab==="today")state.sel=todayISO();render();window.scrollTo(0,0)});
+document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>goTab(b.dataset.tab));
+
+/* ================= add habit sheet ================= */
+function addHabitSheet(){const have=new Set(state.data.habits.map(h=>h.name.toLowerCase()));const opts=SUGG.map((x,i)=>({...x,i})).filter(x=>!have.has(x.name.toLowerCase()));const n=active().length;
+  openSheet("Нова звичка",`${n>=5?`<div class="note">У Вас ${n} активних звичок. Найчастіше трекери кидають через перевантаження. Додати можна, але, можливо, спершу закріпіть наявні?</div>`:""}
+    ${opts.length?`<span class="cap">готові варіанти</span><div class="chips">${opts.map(x=>`<button class="chip" data-sg="${x.i}">${esc(x.name)}${x.type==="count"?" · "+x.target+" "+x.unit:""}</button>`).join("")}</div>`:""}
+    <button class="btn" id="ownHabit">Своя звичка</button>`,()=>{
+    document.getElementById("sheetBody").onclick=e=>{const b=e.target.closest("button");if(!b)return;
+      if(b.id==="ownHabit"){habitForm();return}
+      if(b.dataset.sg){const x=SUGG[+b.dataset.sg];state.data.habits.push({id:uid(),created:todayISO(),schedule:{kind:"daily",days:[1,2,3,4,5],times:3},step:1,unit:"",target:1,...x});save();closeSheet();render();toast(`«${x.name}» додано`)}}})}
+
+/* ================= nav swipe ================= */
+(function(){const nav=document.querySelector("nav.tabs");const btns=[...nav.querySelectorAll("button")];const ind=document.createElement("span");ind.className="ind";nav.prepend(ind);
+  const TABS=btns.map(b=>b.dataset.tab);let drag=null,suppress=false;
+  const geo=()=>{const r=nav.getBoundingClientRect();const b0=btns[0].getBoundingClientRect();const step=btns.length>1?btns[1].getBoundingClientRect().left-b0.left:b0.width;return {r,b0,step}};
+  function place(x,anim){const {b0,r}=geo();ind.style.transition=anim?"":"none";ind.style.width=b0.width+"px";ind.style.height=b0.height+"px";ind.style.top=(b0.top-r.top)+"px";ind.style.left=(b0.left-r.left)+"px";ind.style.transform=`translateX(${x}px)`}
+  window.placeNavInd=()=>{const i=TABS.indexOf(state.tab);place(i*geo().step,true)};
+  const idxAt=cx=>{const {b0,step}=geo();return Math.max(0,Math.min(btns.length-1,Math.round((cx-b0.left-b0.width/2)/step)))};
+  nav.addEventListener("pointerdown",e=>{drag={x0:e.clientX,t0:Date.now(),i0:TABS.indexOf(state.tab),moved:false,id:e.pointerId}});
+  nav.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x0;if(!drag.moved&&Math.abs(dx)<8)return;drag.moved=true;try{nav.setPointerCapture(drag.id)}catch(err){}nav.classList.add("dragging");
+    const {b0,step}=geo();const max=step*(btns.length-1);const x=Math.max(0,Math.min(max,e.clientX-b0.left-b0.width/2));place(x,false)});
+  const end=e=>{if(!drag)return;const d=drag;drag=null;nav.classList.remove("dragging");if(!d.moved){placeNavInd();return}
+    suppress=true;setTimeout(()=>suppress=false,0);
+    let i=idxAt(e.clientX);const dx=e.clientX-d.x0,dt=Date.now()-d.t0;if(i===d.i0&&dt<300&&Math.abs(dx)>30)i=Math.max(0,Math.min(btns.length-1,d.i0+(dx>0?1:-1)));
+    goTab(TABS[i])};
+  nav.addEventListener("pointerup",end);nav.addEventListener("pointercancel",e=>{drag=null;nav.classList.remove("dragging");placeNavInd()});
+  nav.addEventListener("click",e=>{if(suppress){e.stopPropagation();e.preventDefault()}},true);
+  addEventListener("resize",()=>placeNavInd());
+})();
+function goTab(t){flushNote();state.moodOpen=false;if(t===state.tab){placeNavInd();return}state.tab=t;if(t==="today")state.sel=todayISO();render();window.scrollTo(0,0)}
 
 /* ================= note autosave ================= */
 let noteTimer=null;
