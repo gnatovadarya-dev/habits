@@ -246,11 +246,17 @@ function vToday(){
   if(f)html+=`<div class="card fact"><span class="cap">факт дня</span><div style="font-size:16px;font-weight:400">${esc(f.t)}</div><div class="src">${esc(f.s)}</div></div>`;
   else if(isToday&&pr.total&&!rest)html+=`<div class="muted small" style="text-align:center">Виконайте всі звички, щоб відкрити факт дня</div>`;
   const m=state.data.mood[d]||{};const tags=[...BASE_TAGS,...(S().tags||[])];const prompt=clean(pickStable(C.PROMPTS,"p"+d));
+  if(m.level&&!state.moodOpen){
+    const sub=[(m.tags||[]).join(" · "),m.note?"«"+m.note.slice(0,60)+(m.note.length>60?"…":"")+"»":""].filter(Boolean).join(" — ");
+    html+=`<button class="glass moodsum" data-moodopen="1" aria-label="Змінити настрій"><span class="mf">${faceSVG(m.level)}</span>
+      <span class="mt2"><span class="mh">${m.level} · ${MOOD_L[m.level-1].toLowerCase()}</span>${sub?`<span class="ms">${esc(sub)}</span>`:`<span class="ms">${isToday?"настрій сьогодні":"настрій"}</span>`}</span><span class="cap">змінити</span></button>`;
+  }else{
   html+=`<div class="card" id="moodCard"><div class="row"><span class="cap">${isToday?"як Ви сьогодні":"настрій"}</span><span style="font-size:15px;font-weight:400">${m.level?m.level+" · "+MOOD_L[m.level-1].toLowerCase():""}</span></div>
     <div class="faces" role="group" aria-label="Настрій від 1 до 10">${MOOD_L.map((l,i)=>`<button class="face" data-mood="${i+1}" aria-pressed="${m.level===i+1}" aria-label="${i+1}: ${l}">${faceSVG(i+1)}<small>${i+1}</small></button>`).join("")}</div>
     <div class="chips">${tags.map(tg=>`<button class="chip" data-tag="${esc(tg)}" aria-pressed="${(m.tags||[]).includes(tg)}">${esc(tg)}</button>`).join("")}<button class="chip add" data-addtag="1">+ своя</button></div>
-    <label class="f" for="moodNote"><span class="muted">${esc(prompt)}</span><textarea id="moodNote" maxlength="800" placeholder="Кілька слів — уже достатньо">${esc(m.note||"")}</textarea></label>
-    <div class="row"><span class="muted small">${m.level?"Збережено":"Оберіть обличчя, щоб зберегти"}</span><button class="btn sm" id="saveNote" ${m.level?"":"disabled"}>Зберегти запис</button></div></div>`;
+    <label class="f" for="moodNote"><span class="muted">${esc(prompt)}</span><textarea id="moodNote" maxlength="800" placeholder="Кілька слів — уже достатньо">${esc(m.note||state.draftNote||"")}</textarea></label>
+    <div class="row"><span class="muted small" id="noteStatus" aria-live="polite">${m.level?"Усе зберігається автоматично":"Оберіть обличчя — і запис збережеться сам"}</span>${m.level?`<button class="lnk" data-moodclose="1">Згорнути</button>`:""}</div></div>`;
+  }
   const selfies=state.data.photos.filter(x=>x.k==="selfie");
   if(m.level>=9&&!selfies.some(x=>x.d===d))html+=`<div class="glass selfie"><button class="sp" data-photo="selfie" aria-label="Зробити селфі">СЕЛФІ</button><div class="sx"><span style="font-size:16px;font-weight:400">День на ${m.level}! Збережіть цю усмішку</span><span class="muted small">Вона потрапить у галерею «Мої найкращі дні», щоб гортати у важкі.</span><button class="btn sm" data-photo="selfie">Зробити фото</button></div></div>`;
   if(m.level&&m.level<=3&&selfies.length){const s=pickStable(selfies,"c"+d);const sm=state.data.mood[s.d];
@@ -516,11 +522,13 @@ function afterHabitChange(h,d,wasDone){const nowDone=isDone(h,d);
     else{const st=streak(h);toast(st.n>=3?`${st.n} ${st.unit} поспіль. `+pickFresh(C.PRAISE,"pr"):pickFresh(C.PRAISE,"pr"))}
     checkMilestone(h,d);save()}}
 function setMood(level){const d=state.sel;const m=state.data.mood[d]||{tags:[],note:""};const n=document.getElementById("moodNote");const first=!state.data.mood[d];
-  state.data.mood[d]={...m,level,note:n?n.value:m.note,at:new Date().toISOString()};save();render();
+  state.moodOpen=true;state.data.mood[d]={...m,level,note:(n?n.value:m.note||"").trim(),at:new Date().toISOString()};state.draftNote="";save();render();
   if(first||m.level!==level)toast(pickFresh(moodPool(level),"m"+Math.ceil(level/2)))}
 
 document.getElementById("app").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const d=state.sel;
-  if(b.dataset.day){state.sel=b.dataset.day;render();return}
+  if(b.dataset.day){flushNote();state.sel=b.dataset.day;state.moodOpen=false;render();return}
+  if(b.dataset.moodopen){state.moodOpen=true;render();document.getElementById("moodCard")?.scrollIntoView({behavior:"smooth",block:"center"});return}
+  if(b.dataset.moodclose){flushNote();state.moodOpen=false;render();return}
   if(b.dataset.toggle){const h=findH(b.dataset.toggle);const was=isDone(h,d);setVal(h,d,was?0:1);afterHabitChange(h,d,was);return}
   if(b.dataset.inc||b.dataset.dec){const h=findH(b.dataset.inc||b.dataset.dec);const was=isDone(h,d);setVal(h,d,Math.max(0,val(h,d)+(b.dataset.inc?1:-1)*(h.step||1)));afterHabitChange(h,d,was);return}
   if(b.dataset.proof){askPhoto("proof",b.dataset.proof);return}
@@ -528,7 +536,7 @@ document.getElementById("app").addEventListener("click",e=>{const b=e.target.clo
   if(b.dataset.view){viewPhoto(b.dataset.view);return}
   if(b.dataset.mood){setMood(+b.dataset.mood);return}
   if(b.dataset.tag){const m=state.data.mood[d];if(!m){toast("Спершу оберіть настрій");return}
-    const s=new Set(m.tags||[]);s.has(b.dataset.tag)?s.delete(b.dataset.tag):s.add(b.dataset.tag);m.tags=[...s];const n=document.getElementById("moodNote");if(n)m.note=n.value;save();render();return}
+    const s=new Set(m.tags||[]);s.has(b.dataset.tag)?s.delete(b.dataset.tag):s.add(b.dataset.tag);m.tags=[...s];const n=document.getElementById("moodNote");if(n)m.note=n.value.trim();state.moodOpen=true;save();render();return}
   if(b.dataset.addtag){openSheet("Своя мітка",`<label class="f" for="tagIn">Назва<input id="tagIn" maxlength="24" placeholder="Наприклад: Кіт"></label><button class="btn" id="tagOk">Додати</button>`,()=>{
     document.getElementById("tagOk").onclick=()=>{const v=clean(document.getElementById("tagIn").value);if(!v)return;const t=S().tags||[];if(!t.includes(v)&&!BASE_TAGS.includes(v))t.push(v);S().tags=t;save();closeSheet();render()}});return}
   if(b.id==="saveNote"){const m=state.data.mood[d];if(!m)return;m.note=document.getElementById("moodNote").value.trim();save();render();toast(m.note?"Запис збережено. Дякую, що приділили собі час":"Збережено");return}
@@ -556,7 +564,16 @@ document.getElementById("app").addEventListener("click",e=>{const b=e.target.clo
   if(b.id==="phImportBtn"){photoImport.click();return}
 });
 document.getElementById("app").addEventListener("change",e=>{if(e.target.id==="bkFile"&&e.target.files[0]){importBackup(e.target.files[0]);e.target.value=""}});
-document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;if(b.dataset.tab==="today")state.sel=todayISO();render();window.scrollTo(0,0)});
+document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{flushNote();state.moodOpen=false;state.tab=b.dataset.tab;if(b.dataset.tab==="today")state.sel=todayISO();render();window.scrollTo(0,0)});
+
+/* ================= note autosave ================= */
+let noteTimer=null;
+function flushNote(){clearTimeout(noteTimer);const n=document.getElementById("moodNote");if(!n)return;const d=state.sel;const m=state.data.mood[d];const v=n.value.trim();
+  if(!m){state.draftNote=n.value;return}if((m.note||"")!==v){m.note=v;save();const st=document.getElementById("noteStatus");if(st)st.textContent="Збережено"}}
+document.getElementById("app").addEventListener("input",e=>{if(e.target.id!=="moodNote")return;const st=document.getElementById("noteStatus");
+  if(st&&state.data.mood[state.sel])st.textContent="Зберігаю…";clearTimeout(noteTimer);noteTimer=setTimeout(flushNote,600)});
+document.getElementById("app").addEventListener("focusout",e=>{if(e.target.id==="moodNote")flushNote()});
+addEventListener("pagehide",flushNote);
 
 /* ================= backup ================= */
 async function exportBackup(){const name="zvychky-"+todayISO()+".json";const file=new File([JSON.stringify({app:"habits",version:3,exported:new Date().toISOString(),...state.data},null,1)],name,{type:"application/json"});
@@ -582,5 +599,5 @@ load();applyTheme();save();
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 render();
 let lastDay=todayISO();
-document.addEventListener("visibilitychange",()=>{if(document.hidden)return;const t=todayISO();if(t!==lastDay){lastDay=t;state.sel=t;S().lastOpen=t;save();render()}});
+document.addEventListener("visibilitychange",()=>{if(document.hidden){flushNote();if(state.tab==="today"&&state.data.mood[state.sel]){state.moodOpen=false;render()}return}const t=todayISO();if(t!==lastDay){lastDay=t;state.sel=t;S().lastOpen=t;save();render()}});
 if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
